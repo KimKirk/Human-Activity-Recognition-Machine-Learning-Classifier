@@ -1,0 +1,258 @@
+---
+title: "Machine Learning Classifier"
+author: "Kim Kirk"
+date: "May 14, 2018"
+output:
+  html_document: default
+  pdf_document: default
+fig.cap: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Supervised Machine Learning Classifier of Human Activity Recognition
+## Predicting quality of personal exercise activity as part of the quantified self movement
+
+### Executive Summary
+The business question, "How well do members of the quantified self movement perform weight lifting exercises as part of their personal activity?" was answered. Weight Lifting Exercise Dataset was imported, cleaned, and modeled for how well subjects performed their weight lifting exercises. The outcome and predictor variables were identified. Both the outcome variable (CLASSE) and predictor variables were analyzed for missing values, outliers, correlation, etc. ; see "Data Processing" for additional details. Feature engineering was conducted to select and transform relevant variables. The classification model was created using Random Forest algorithm given the categorical nature of the outcome variable and several predictor variables, the highly non-linear relationship between outcome and predictor variables, the multiclass nature of the outcome variable, and no need for the assumption of normality of the predictor variables. The classifier had an out-of-sample accuracy rate of 99.82%.
+
+### Data Processing 
+The data set is imported, as are required packages. Exploratory data analysis is conducted on the data set. 
+
+#### There are multiple categorical predictor variables:
+```{r}
+path <- file.path(paste(getwd(), 'pml-training.csv', sep = "/"))
+url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+download.file(url, path)
+trainingImport <- read.csv("pml-training.csv", header = TRUE, stringsAsFactors = FALSE)
+
+##check environment for packages and install or not as required
+##credit Matthew on StackOverflow https://stackoverflow.com/users/4125693/matthew
+using<-function(...) {
+    libs<-unlist(list(...))
+    req<-unlist(lapply(libs,require,character.only=TRUE))
+    need<-libs[req==FALSE]
+    n<-length(need)
+    if(n>0){
+        libsmsg<-if(n>2) paste(paste(need[1:(n-1)],collapse=", "),",",sep="") else need[1]
+        print(libsmsg)
+        if(n>1){
+            libsmsg<-paste(libsmsg," and ", need[n],sep="")
+        }
+        libsmsg<-paste("The following packages could not be found: ",libsmsg,"\n\r\n\rInstall missing packages?",collapse="")
+        if(winDialog(type = c("yesno"), libsmsg)=="YES"){       
+            install.packages(need)
+            lapply(need,require,character.only=TRUE)
+        }
+    }
+}
+
+##install and load packages 
+using("dplyr")
+using("caret")
+using("mlbench")
+
+set.seed(550)
+
+glimpse(trainingImport[,sapply(trainingImport, typeof) == typeof("character")])
+
+
+```
+
+- The outcome variable is categorical, so analyzing for linearity between outcome and predictors is not appropriate.
+
+
+#### The outcome variable is also multiclass in nature:
+```{r}
+
+table(trainingImport$classe)
+```
+- Clearly, the model will need to be a classifier type.
+
+
+#### The data set also has missing and irregular data:
+```{r}
+table(is.na(trainingImport))
+#index positions of irregular data
+grep(pattern = "#DIV/0!", x = trainingImport)
+
+#index positions of blank values
+grep(pattern = "", x = trainingImport)
+```
+- The missing and irregular data are confined to variables that hold descriptive statistics and intentional missing data. Given that these missing and irregular data are statistics that are inherent in the data set, they are removed from the data set to eliminate redundancy.
+
+```{r}
+indexPositions <- grep("^kurtosis|skewness|max|min|amplitude|var|avg|stddev", colnames(trainingImport), value = FALSE)
+trainingDataSet <- select(trainingImport, 1:160, -(indexPositions))
+#check for NAs
+sum(is.na(trainingDataSet))
+
+#check for irregular values
+grep(pattern = "#DIV/0!", x = trainingDataSet)
+
+```
+
+
+#### The data set also has outliers for several variables; two examples of which are shown:
+```{r, fig.height=5, fig.width=3 ,fig.cap="Outliers for two predictor variables"}
+boxplot(summary(trainingDataSet$magnet_forearm_z), main = "Magnet_Forearm_Z Variable", xlab = "magnet_forearm_z")
+boxplot(summary(trainingDataSet$accel_forearm_x), main = "Accel_Forearm_X Variable", xlab = "accel_forearm_x")
+
+```
+
+
+#### The data set has predictor variables that are correlated:
+```{r}
+correlationMatrix <- cor(trainingDataSet[,-c(1, 2, 5, 6, 60)])
+highlyCorrelated <- findCorrelation(correlationMatrix, cutoff=0.5, names = TRUE)
+print(highlyCorrelated)
+trainingDataSet <- select(trainingDataSet, -one_of(highlyCorrelated))
+
+```
+- Predictor variables the are correlated to each other are removed to reduce redundancy.
+
+
+#### The CLASSE outcome variable has issues with class imbalance: See Appendix A
+```{r balance, fig.height=5, fig.width=3, fig.cap="Values balance for CLASSE outcome variable", echo = FALSE, eval=FALSE}
+barplot(table(trainingDataSet$classe), main = "Class Balance", xlab = "Classe Variable", ylab = "Count", col = rainbow(5))
+```
+
+
+#### Feature engineering is performed. The variable X is removed as it represents a counting variable for the number of observations and is not relevant to prediction.
+```{r}
+trainingDataSet <- trainingDataSet[,-(1)]
+```
+
+
+#### Additionally, feature transformation is performed on the CLASSE variable to turn it into a factor data type so that once the data is partitioned into a test set, no error message will occur about missing outcome values if the resampling doesn't pick up one of the values. 
+```{r}
+trainingDataSet$classe <- as.factor(trainingDataSet$classe)
+
+```
+
+
+#### Other continuous predictor variables have non-Gaussian distributions; two examples shown: See Appendix A
+```{r qqplots, fig.height=5, fig.width=3, fig.cap="QQ Plots for two predictor variables", eval= FALSE, echo=FALSE}
+qqnorm(trainingDataSet$magnet_belt_z, main = "Normal QQ Plot: Magnet_Belt_Z Variable")
+qqline(trainingDataSet$magnet_belt_z)
+
+qqnorm(trainingDataSet$pitch_forearm, main = "Normal QQ Plot: Pitch_Forearm Variable")
+qqline(trainingDataSet$pitch_forearm)
+
+```
+- Several of these variables cannot be transformed using a more straightforward transformation such as a BoxCox or Log due to the negative and/or zero values in the data.
+
+
+### Model Creation 
+Random Forest machine learning algorithm from the "caret" package can handle issues found in the data set during the data exploration phase such as
+- categorical nature of the outcome variable to create a classification model
+- mixed data types for predictor variables (quantitative and qualitative) without the requirement to create dummy variables or one-hot encoding
+- non-linear relationship between outcome and predictor variables
+- multiclass nature of the outcome variable
+- no assumption of normality of the predictor variables is required
+- increased interpretability for quantitative predictor variables that could not be transformed with a BoxCox or Log transformation
+- apply binning to imbalanced data
+
+
+#### Parameters are tuned for resampling/validation purposes:
+```{r}
+ ctrl = trainControl(method="cv", number = 3, selectionFunction = "oneSE")
+
+```
+- Cross validation with 3 folds is used with a selection function of oneSE because the tuning parameter associated with the best performance may over fit; the simplest model within one standard error of the empirically optimal model is the better choice @Breiman et al.(1984).
+
+
+
+#### The training data is further partitioned into training and validation test sets:
+```{r}
+ inTraining <- createDataPartition(trainingDataSet$classe, p = .75, list = FALSE)
+    training <- trainingDataSet[ inTraining,]
+    testing  <- trainingDataSet[-inTraining,]
+    
+```
+
+#### Training data is preprocessed to transform the variables via scale and center. Binning is automatically performed by the algorithm for imbalanced data, and the data contains no missing values.
+```{r}
+    trained <- train(classe ~ .,
+                     data = training, method = "rf",
+                     trControl = ctrl, metric = "Accuracy", 
+                     preProcess = c("center", "scale"))
+   
+```
+  
+- Let's take a look at the model characteristics.
+```{r}
+    print.train(trained)
+    
+```
+- The best accuracy is shown to be 99.79% using 25 variables.
+- Let's plot the resampling profile of model to examine the relationship between the estimates of performance and the tuning parameters. See Appendix A.
+```{r resampleProfile, fig.height=5, fig.width=3, fig.cap="Resampling profile of classifier", echo=FALSE, eval=FALSE}
+    plot.train(trained, plotType = "line", metric = "Accuracy", nameInStrip = TRUE)
+    
+```
+
+- Let's see the most important variable in the training of the model. See Appendix A.
+```{r variableImportance, fig.height=10, fig.width=13, fig.cap="Variable importance of classifier", echo=FALSE, eval=FALSE}
+    plot(varImp(trained),main="Random Forests - Variable Importance")
+        
+```
+- The num_window (window number) seems to be the predictor with the most importance in training the model. Window number refers to the window of time (0.5s to 2.5s) in which calculations were made for Euler angles and raw accelerometer, gyroscope and
+magnetometer readings for the sensors used on the study subjects @Velloso, E. et al. [p. 3] . It seems that the data for a specific window of time would be of importance to classifying the subject's activity.
+
+
+#### Now to make predictions using the trained model and the validation data set.
+```{r}
+    predicted <- predict(trained, newdata = testing, type = "raw")
+    
+```
+
+
+## Model Metrics
+- Cross validation was used with 3 folds, 25 predictors, and an accuracy rate of 99.82%
+- Let's create a confusion matrix to see prediction accuracy statistics and a breakdown across classes.
+```{r}
+
+confusionMatrix <- confusionMatrix(predicted, testing[,27], mode = "everything")
+confusionMatrix
+```
+- The accuracy rate, which is overall how often the classifier is correct, is 99.84% which is high. 
+- The out-of-sample error rate is 0.16% which is low. The p-value is significant.
+
+There are a few misclassifications:
+  - one instance of classifying a C class as a D class
+  - three instances of classifying a D class as a C class
+  - four instances of classifying a B class as a C class
+  
+- Sensitivity (when the class is actually the correct class, how often does the classifier predict correct class) for each class is no less than 99.58% which is high. 
+- Specificity (when the class is actually the incorrect class, how often does the classifier predict the incorrect class) for each class is no less than 99.83% which is high. 
+- Precision (when the classifier predicts a class, how often is the prediction correct) is no less than 99.19% for each class, which is high. 
+
+# Conclusion
+Overall, the accuracy of the classifier is very high. There are some misclassifications but they are minimal. Random Forest algorithm was a good choice to build the model as it easily handles various issues of outliers which can skew the data and create misclassified predictions, class imbalance which can bias the model as it will choose the heavily represented class during training, mixed data type predictors which would require dummy variable creation or one-hot encoding, no assumption of normality for the variables, and multiclass classification.
+
+# References
+
+Breiman, L., Friedman, J.H., Olshen, R.A., and Stone, C.I. (1984). Classification and
+regression trees. Belmont, Calif.: Wadsworth.
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013 http://groupware.les.inf.puc-rio.br/har#ixzz5Fc5QoJtY
+
+# Appendix A
+```{r , ref.label = 'balance', eval = TRUE}
+
+```
+
+```{r, ref.label = 'qqplots', eval = TRUE}
+
+```
+
+```{r, ref.label= 'resampleProfile', eval=TRUE}
+
+```
+
+```{r, ref.label='variableImportance', eval=TRUE, fig.height=10, fig.width=13}
+
+```
