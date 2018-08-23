@@ -7,7 +7,7 @@
 
 Processing Instructions:
 - HTML and pdf file are included.
-- https://kimkirk.github.io/Human-Activity-Recognition-Machine-Learning-Classifier/ to view HTML version of report
+- https://kimkirk.github.io/Supervised-Machine-Learning-Classifier/ to view HTML version of report
 - To improve reproducibility of the data analysis, an R-Markdown file is included. 
 - Use R Studio or other application to read R-Markdown file.
 
