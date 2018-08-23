@@ -1,4 +1,4 @@
-# Human-Activity-Recognition-Machine-Learning-Classifier
+# Supervised-Machine-Learning-Classifier
 
 - Predicting quality of personal exercise activity as part of the quantified self movement.
 
