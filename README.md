@@ -1,4 +1,5 @@
 # Supervised-Machine-Learning-Classifier
+- Healthcare: Wearables/Sensors
 
 - Predicting quality of personal exercise activity as part of the quantified self movement.
 
